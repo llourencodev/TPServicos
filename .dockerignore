@@ -1,0 +1,8 @@
+.git/
+.env
+node_modules/
+**/node_modules/
+apps/api/dist/
+apps/api/generated/
+apps/web/dist/
+apps/web/tsconfig.tsbuildinfo

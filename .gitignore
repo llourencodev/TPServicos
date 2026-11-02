@@ -1,0 +1,7 @@
+node_modules/
+.env
+apps/api/dist/
+apps/api/generated/
+apps/api/prisma/*.db
+apps/web/dist/
+apps/web/tsconfig.tsbuildinfo

@@ -1,0 +1,8 @@
+node_modules/
+apps/api/dist/
+apps/api/generated/
+apps/api/prisma/migrations/
+apps/api/prisma/schema.prisma
+apps/web/dist/
+apps/web/tsconfig.tsbuildinfo
+package-lock.json

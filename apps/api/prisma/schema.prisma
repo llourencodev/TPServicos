@@ -1,0 +1,484 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  CUSTOMER
+  PROVIDER
+  ADMIN
+}
+
+enum RequestStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum CreditLedgerType {
+  PURCHASE
+  LEAD_UNLOCK
+  REFUND
+  ADMIN_ADJUSTMENT
+}
+
+enum CreditPurchaseStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum RefundRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ProposalStatus {
+  SENT
+  ACCEPTED
+  DECLINED
+  WITHDRAWN
+}
+
+enum VerificationStatus {
+  NOT_SUBMITTED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum ReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+enum SecurityTokenKind {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+enum AdvertisementStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id                     String                   @id @default(cuid())
+  name                   String
+  email                  String                   @unique
+  phone                  String?
+  passwordHash           String
+  role                   UserRole                 @default(CUSTOMER)
+  active                 Boolean                  @default(true)
+  emailVerifiedAt        DateTime?
+  passwordChangedAt      DateTime?
+  termsAcceptedAt        DateTime?
+  privacyAcceptedAt      DateTime?
+  provider               ProviderProfile?
+  requests               ServiceRequest[]
+  leadUnlocks            LeadUnlock[]
+  creditAccount          CreditAccount?
+  purchases              CreditPurchase[]         @relation("ProviderPurchases")
+  reviewedPurchases      CreditPurchase[]         @relation("PurchaseReviewer")
+  refundRequests         LeadRefundRequest[]      @relation("RefundRequester")
+  reviewedRefunds        LeadRefundRequest[]      @relation("RefundReviewer")
+  reviewedAdvertisements SponsoredAdvertisement[] @relation("AdvertisementReviewer")
+  refreshSessions        RefreshSession[]
+  ratingsGiven           Rating[]                 @relation("RatingAuthor")
+  ratingsReceived        Rating[]                 @relation("RatingProvider")
+  requestStatusEvents    ServiceRequestStatusHistory[] @relation("StatusEventActor")
+  proposals              Proposal[]
+  sentMessages           DirectMessage[]          @relation("MessageSender")
+  receivedMessages       DirectMessage[]          @relation("MessageRecipient")
+  notifications          AppNotification[]
+  reportsMade            PlatformReport[]         @relation("ReportAuthor")
+  reportsReviewed        PlatformReport[]         @relation("ReportReviewer")
+  verificationReviews    ProviderProfile[]        @relation("ProviderVerificationReviewer")
+  acceptedRequests       ServiceRequest[]         @relation("AcceptedProvider")
+  securityTokens         SecurityToken[]
+  auditEvents            AuditLog[]               @relation("AuditActor")
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+
+  @@index([role, active])
+}
+
+model RefreshSession {
+  id        String    @id
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+}
+
+model ProviderProfile {
+  id           String             @id @default(cuid())
+  userId       String             @unique
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bio          String             @default("")
+  city         String             @default("")
+  serviceAreas String[]           @default([])
+  availability String             @default("Disponível para novos serviços")
+  priceFromCents Int?
+  serviceRadiusKm Int             @default(15)
+  portfolioUrls String[]          @default([])
+  avatarUrl      String?
+  latitude       Float?
+  longitude      Float?
+  active       Boolean            @default(true)
+  verifiedAt   DateTime?
+  verificationStatus VerificationStatus @default(NOT_SUBMITTED)
+  verificationNote String?
+  verificationRequestedAt DateTime?
+  verificationReviewedAt DateTime?
+  verificationReviewerId String?
+  verificationReviewer User? @relation("ProviderVerificationReviewer", fields: [verificationReviewerId], references: [id], onDelete: SetNull)
+  verificationDocumentUrls String[]       @default([])
+  categories   ProviderCategory[]
+  unlocks      LeadUnlock[]
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@index([active, createdAt, id])
+  @@index([active, city, createdAt])
+  @@index([serviceAreas], type: Gin)
+}
+
+model ServiceCategory {
+  id          String             @id @default(cuid())
+  name        String
+  slug        String             @unique
+  description String?
+  active      Boolean            @default(true)
+  leadCost    Int                @default(5)
+  providers   ProviderCategory[]
+  requests    ServiceRequest[]
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+}
+
+model ProviderCategory {
+  providerId String
+  provider   ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   ServiceCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  createdAt  DateTime        @default(now())
+
+  @@id([providerId, categoryId])
+  @@index([categoryId])
+}
+
+model ServiceRequest {
+  id               String          @id @default(cuid())
+  customerId       String
+  customer         User            @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  categoryId       String
+  category         ServiceCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  title            String
+  description      String
+  city             String
+  neighborhood     String
+  photoUrls        String[]        @default([])
+  contactConsentAt DateTime
+  status           RequestStatus   @default(OPEN)
+  maxUnlocks       Int             @default(3)
+  unlockedCount    Int             @default(0)
+  leadCreditCost   Int
+  expiresAt        DateTime?
+  acceptedProviderId String?
+  acceptedProvider   User?             @relation("AcceptedProvider", fields: [acceptedProviderId], references: [id], onDelete: SetNull)
+  completedAt        DateTime?
+  cancelledAt        DateTime?
+  unlocks          LeadUnlock[]
+  rating           Rating?
+  statusHistory    ServiceRequestStatusHistory[]
+  proposals        Proposal[]
+  messages         DirectMessage[]
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@index([status, city, categoryId, createdAt])
+  @@index([customerId, createdAt])
+  @@index([acceptedProviderId, status, updatedAt])
+}
+
+model ServiceRequestStatusHistory {
+  id             String         @id @default(cuid())
+  requestId      String
+  request        ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  previousStatus RequestStatus?
+  status         RequestStatus
+  actorId        String?
+  actor          User?          @relation("StatusEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt      DateTime       @default(now())
+
+  @@index([requestId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+model LeadUnlock {
+  id                String             @id @default(cuid())
+  providerId        String
+  provider          User               @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  providerProfileId String
+  providerProfile   ProviderProfile    @relation(fields: [providerProfileId], references: [id], onDelete: Restrict)
+  requestId         String
+  request           ServiceRequest     @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  creditsCharged    Int
+  refundedAt        DateTime?
+  refundRequest     LeadRefundRequest?
+  createdAt         DateTime           @default(now())
+
+  @@unique([providerId, requestId])
+  @@index([providerId, createdAt])
+  @@index([requestId, createdAt])
+}
+
+model LeadRefundRequest {
+  id             String              @id @default(cuid())
+  unlockId       String              @unique
+  unlock         LeadUnlock          @relation(fields: [unlockId], references: [id], onDelete: Restrict)
+  providerId     String
+  provider       User                @relation("RefundRequester", fields: [providerId], references: [id], onDelete: Restrict)
+  reason         String
+  status         RefundRequestStatus @default(PENDING)
+  reviewerId     String?
+  reviewer       User?               @relation("RefundReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  reviewedAt     DateTime?
+  resolutionNote String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@index([status, createdAt])
+  @@index([providerId, createdAt])
+}
+
+model CreditAccount {
+  id        String              @id @default(cuid())
+  userId    String              @unique
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance   Int                 @default(0)
+  ledger    CreditLedgerEntry[]
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+}
+
+model CreditLedgerEntry {
+  id           String           @id @default(cuid())
+  accountId    String
+  account      CreditAccount    @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  type         CreditLedgerType
+  amount       Int
+  balanceAfter Int
+  description  String
+  referenceId  String?
+  createdAt    DateTime         @default(now())
+
+  @@index([accountId, createdAt])
+  @@index([referenceId])
+}
+
+model CreditPackage {
+  id            String           @id @default(cuid())
+  name          String
+  credits       Int
+  amountInCents Int
+  active        Boolean          @default(true)
+  purchases     CreditPurchase[]
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([active, amountInCents])
+}
+
+model AdvertisingPackage {
+  id             String                   @id @default(cuid())
+  name           String
+  description    String?
+  durationDays   Int
+  amountInCents  Int
+  active         Boolean                  @default(true)
+  advertisements SponsoredAdvertisement[]
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+
+  @@index([active, amountInCents])
+}
+
+model SponsoredAdvertisement {
+  id               String              @id @default(cuid())
+  packageId        String
+  package          AdvertisingPackage  @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  companyName      String
+  description      String
+  city             String
+  category         String
+  logoUrl          String?
+  websiteUrl       String?
+  contactName      String
+  contactEmail     String
+  contactPhone     String
+  contactConsentAt DateTime
+  amountInCents    Int
+  status           AdvertisementStatus @default(PENDING)
+  reviewNote       String?
+  reviewedById     String?
+  reviewer         User?               @relation("AdvertisementReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt       DateTime?
+  startsAt         DateTime?
+  endsAt           DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@index([status, createdAt])
+  @@index([status, endsAt])
+  @@index([packageId, createdAt])
+}
+
+model CreditPurchase {
+  id               String               @id @default(cuid())
+  providerId       String
+  provider         User                 @relation("ProviderPurchases", fields: [providerId], references: [id], onDelete: Restrict)
+  packageId        String?
+  package          CreditPackage?       @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  credits          Int
+  amountInCents    Int
+  status           CreditPurchaseStatus @default(PENDING)
+  paymentReference String?
+  reviewedById     String?
+  reviewedBy       User?                @relation("PurchaseReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt       DateTime?
+  rejectionReason  String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  @@index([status, createdAt])
+  @@index([providerId, createdAt])
+}
+
+model Rating {
+  id         String         @id @default(cuid())
+  authorId   String
+  author     User           @relation("RatingAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  providerId String
+  provider   User           @relation("RatingProvider", fields: [providerId], references: [id], onDelete: Restrict)
+  requestId  String         @unique
+  request    ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  score      Int
+  comment    String?
+  createdAt  DateTime       @default(now())
+
+  @@index([providerId, createdAt])
+}
+
+model Proposal {
+  id          String         @id @default(cuid())
+  requestId   String
+  request     ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  providerId  String
+  provider    User           @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  summary     String
+  priceCents  Int?
+  scheduledFor DateTime?
+  status      ProposalStatus @default(SENT)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@unique([requestId, providerId])
+  @@index([requestId, status, createdAt])
+  @@index([providerId, status, createdAt])
+}
+
+model DirectMessage {
+  id          String         @id @default(cuid())
+  requestId   String
+  request     ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  senderId    String
+  sender      User           @relation("MessageSender", fields: [senderId], references: [id], onDelete: Restrict)
+  recipientId String
+  recipient   User           @relation("MessageRecipient", fields: [recipientId], references: [id], onDelete: Restrict)
+  body        String
+  attachmentUrls String[]  @default([])
+  readAt      DateTime?
+  createdAt   DateTime       @default(now())
+
+  @@index([requestId, createdAt])
+  @@index([recipientId, readAt, createdAt])
+  @@index([senderId, createdAt])
+}
+
+model AppNotification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String
+  title     String
+  body      String
+  href      String?
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId, readAt, createdAt])
+}
+
+model PlatformReport {
+  id          String       @id @default(cuid())
+  authorId    String
+  author      User         @relation("ReportAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  targetType  String
+  targetId    String
+  reason      String
+  details     String?
+  status      ReportStatus @default(OPEN)
+  reviewerId  String?
+  reviewer    User?        @relation("ReportReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  reviewNote  String?
+  reviewedAt  DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([status, createdAt])
+  @@index([targetType, targetId])
+  @@index([authorId, createdAt])
+}
+
+model SecurityToken {
+  id        String            @id @default(cuid())
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      SecurityTokenKind
+  tokenHash String
+  expiresAt DateTime
+  consumedAt DateTime?
+  createdAt DateTime          @default(now())
+
+  @@index([userId, kind, createdAt])
+  @@index([kind, expiresAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String
+  entityId   String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId, createdAt])
+  @@index([actorId, createdAt])
+}
